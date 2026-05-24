@@ -60,12 +60,21 @@ function App() {
 
   const analyzeTransactions = async (txns) => {
     try {
-      const response = await axios.post(`${API_URL}/analyze`, {
+      console.log('Analyzing transactions:', txns?.length || 0);
+      console.log('Sample transaction:', txns?.[0]);
+      
+      const payload = {
         transactions: txns || transactions,
-      });
+      };
+      
+      console.log('Sending to analyze endpoint:', payload);
+      
+      const response = await axios.post(`${API_URL}/analyze`, payload);
+      console.log('Analysis response:', response.data);
       setAnalysis(response.data);
     } catch (error) {
       console.error('Error analyzing transactions:', error);
+      console.error('Error details:', error.response?.data);
     }
   };
 

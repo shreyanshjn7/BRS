@@ -260,9 +260,15 @@ def analyze_transactions():
     """Analyze transactions and generate summary"""
     try:
         data = request.json
-        transactions = data.get('transactions', [])
+        print(f"=== Analyze request received ===")
+        print(f"Request data type: {type(data)}")
+        print(f"Request data: {data}")
+        
+        transactions = data.get('transactions', []) if data else []
+        print(f"Transactions count: {len(transactions)}")
         
         if not transactions:
+            print("Error: No transactions in request")
             return jsonify({'error': 'No transactions provided'}), 400
         
         df = pd.DataFrame(transactions)
