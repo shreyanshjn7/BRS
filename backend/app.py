@@ -56,7 +56,12 @@ def extract_text_from_pdf(pdf_file):
         pdf_reader = PyPDF2.PdfReader(pdf_file)
         text = ""
         for page in pdf_reader.pages:
-            text += page.extract_text()
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        print(f"Extracted {len(text)} characters from PDF")
+        # Print first 2000 chars for debugging
+        print(f"PDF Text Preview (first 2000 chars):\n{text[:2000]}")
         return text
     except Exception as e:
         raise Exception(f"Error reading PDF: {str(e)}")
@@ -65,32 +70,124 @@ def parse_bank_statement_text(text):
     """Parse bank statement text and extract transactions"""
     transactions = []
     
-    # Common patterns for bank statements
-    # Pattern: Date Amount Description
+    # Split text into lines for line-by-line processing
+    lines = text.split('\n')
+    print(f"Total lines in PDF: {len(lines)}")
+    
+    # Multiple patterns for different bank statement formats
     patterns = [
-        r'(\d{2}[/-]\d{2}[/-]\d{4}|\d{2}[/-]\d{2}[/-]\d{2})\s+([^\s]+.*?)\s+([\d,]+\.?\d*)\s*(CR|DR|Cr|Dr)?',
-        r'(\d{2}[/-]\w{3}[/-]\d{4})\s+([^\s]+.*?)\s+([\d,]+\.?\d*)\s*(CR|DR)?',
+        # Pattern 1: DD/MM/YYYY or DD-MM-YYYY followed by description and amount
+        r'(\d{2}[/-]\d{2}[/-]\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})',
+        # Pattern 2: DD/MM/YYYY Description Amount CR/DR
+        r'(\d{2}[/-]\d{2}[/-]\d{4})\s+(.+?)\s+([\d,]+\.?\d*)\s*(CR|DR|Cr|Dr|cr|dr)',
+        # Pattern 3: DD-Mon-YYYY format (like 01-Jan-2024)
+        r'(\d{2}-\w{3}-\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})',
+        # Pattern 4: DD-Mon-YYYY Description Amount CR/DR
+        r'(\d{2}-\w{3}-\d{4})\s+(.+?)\s+([\d,]+\.?\d*)\s*(CR|DR|Cr|Dr)',
+        # Pattern 5: DD/MM/YY format
+        r'(\d{2}[/-]\d{2}[/-]\d{2})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})',
+        # Pattern 6: Date with debit and credit columns (common HDFC/ICICI format)
+        r'(\d{2}[/-]\d{2}[/-]\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s*$',
+        # Pattern 7: More relaxed - date followed by anything then a number
+        r'(\d{2}[/-]\d{2}[/-]\d{4})\s+(.{5,}?)\s+([\d,]+\.?\d+)',
     ]
     
-    for pattern in patterns:
-        matches = re.finditer(pattern, text, re.MULTILINE)
-        for match in matches:
-            try:
-                date = match.group(1)
-                description = match.group(2).strip()
-                amount = float(match.group(3).replace(',', ''))
-                trans_type = match.group(4) if len(match.groups()) > 3 else ''
-                
-                transactions.append({
-                    'date': date,
-                    'description': description,
-                    'amount': amount,
-                    'type': 'Credit' if 'CR' in trans_type.upper() else 'Debit',
-                    'category': 'Uncategorized'
-                })
-            except:
-                continue
+    # Try each pattern
+    for idx, pattern in enumerate(patterns):
+        matches = list(re.finditer(pattern, text, re.MULTILINE))
+        if matches:
+            print(f"Pattern {idx+1} matched {len(matches)} transactions")
+            for match in matches:
+                try:
+                    date = match.group(1)
+                    description = match.group(2).strip()
+                    
+                    # Skip header-like lines
+                    if any(skip in description.lower() for skip in ['date', 'particulars', 'narration', 'balance', 'opening', 'closing']):
+                        continue
+                    
+                    amount = float(match.group(3).replace(',', ''))
+                    
+                    # Determine type based on 4th group if available
+                    trans_type = 'Debit'
+                    if len(match.groups()) >= 4 and match.group(4):
+                        type_indicator = match.group(4).upper()
+                        if 'CR' in type_indicator:
+                            trans_type = 'Credit'
+                        else:
+                            trans_type = 'Debit'
+                    
+                    if amount > 0:
+                        transactions.append({
+                            'date': date,
+                            'description': description,
+                            'amount': amount,
+                            'type': trans_type,
+                            'category': 'Uncategorized'
+                        })
+                except Exception as e:
+                    print(f"Error parsing match: {e}")
+                    continue
+            
+            if transactions:
+                break  # Use first pattern that gives results
     
+    # If no patterns worked, try line-by-line parsing
+    if not transactions:
+        print("No patterns matched. Trying line-by-line parsing...")
+        date_pattern = r'(\d{2}[/-]\d{2}[/-]\d{2,4}|\d{2}-\w{3}-\d{2,4})'
+        amount_pattern = r'([\d,]+\.\d{2})'
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check if line starts with a date
+            date_match = re.match(date_pattern, line)
+            if date_match:
+                date = date_match.group(1)
+                
+                # Find all amounts in the line
+                amounts = re.findall(amount_pattern, line)
+                
+                if amounts:
+                    # Get description - text between date and first amount
+                    remaining = line[date_match.end():].strip()
+                    desc_match = re.match(r'(.+?)\s+[\d,]+\.\d{2}', remaining)
+                    description = desc_match.group(1).strip() if desc_match else remaining[:50]
+                    
+                    # Skip header lines
+                    if any(skip in description.lower() for skip in ['date', 'particulars', 'narration', 'balance', 'opening', 'closing']):
+                        continue
+                    
+                    # If multiple amounts, typically: debit amount, credit amount, balance
+                    # Or: withdrawal, deposit, balance
+                    if len(amounts) >= 2:
+                        amount_val = float(amounts[0].replace(',', ''))
+                        # Check if it's credit or debit
+                        if 'cr' in line.lower() or 'credit' in line.lower():
+                            trans_type = 'Credit'
+                        else:
+                            trans_type = 'Debit'
+                    else:
+                        amount_val = float(amounts[0].replace(',', ''))
+                        if 'cr' in line.lower() or 'credit' in line.lower():
+                            trans_type = 'Credit'
+                        else:
+                            trans_type = 'Debit'
+                    
+                    if amount_val > 0 and description:
+                        transactions.append({
+                            'date': date,
+                            'description': description,
+                            'amount': amount_val,
+                            'type': trans_type,
+                            'category': 'Uncategorized'
+                        })
+                        print(f"Line {i}: {date} | {description[:40]} | {amount_val} | {trans_type}")
+    
+    print(f"Total transactions extracted from PDF: {len(transactions)}")
     return transactions
 
 def parse_csv_statement(file_path):
