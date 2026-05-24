@@ -259,13 +259,33 @@ def get_categories():
 def analyze_transactions():
     """Analyze transactions and generate summary"""
     try:
-        data = request.json
         print(f"=== Analyze request received ===")
-        print(f"Request data type: {type(data)}")
-        print(f"Request data: {data}")
+        print(f"Request method: {request.method}")
+        print(f"Request headers: {dict(request.headers)}")
+        print(f"Request content type: {request.content_type}")
+        
+        # Try to get data from request
+        data = None
+        if request.is_json:
+            data = request.get_json()
+            print(f"Got JSON data: {type(data)}")
+        else:
+            print("Request is not JSON, trying request.data")
+            print(f"Raw data: {request.data}")
+            try:
+                import json
+                data = json.loads(request.data)
+            except:
+                pass
+        
+        print(f"Parsed data type: {type(data)}")
+        print(f"Data keys: {data.keys() if data and isinstance(data, dict) else 'N/A'}")
         
         transactions = data.get('transactions', []) if data else []
         print(f"Transactions count: {len(transactions)}")
+        
+        if transactions:
+            print(f"First transaction: {transactions[0]}")
         
         if not transactions:
             print("Error: No transactions in request")
