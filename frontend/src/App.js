@@ -39,14 +39,26 @@ function App() {
         },
       });
 
+      console.log('Upload response:', response.data);
+      console.log('Transactions received:', response.data.transactions?.length || 0);
+      
+      if (!response.data.transactions || response.data.transactions.length === 0) {
+        alert('No transactions found in the uploaded file. Please check the file format.');
+        setLoading(false);
+        return;
+      }
+
       setTransactions(response.data.transactions);
+      console.log('Transactions set in state:', response.data.transactions.length);
+      
       setActiveTab('transactions');
       
       // Get categories
       const catResponse = await axios.get(`${API_URL}/categories`);
       setCategories(catResponse.data.categories);
       
-      // Analyze transactions
+      // Analyze transactions - pass the transactions directly
+      console.log('About to analyze:', response.data.transactions.length, 'transactions');
       await analyzeTransactions(response.data.transactions);
       
       alert(`Successfully processed ${response.data.count} transactions!`);
@@ -60,16 +72,27 @@ function App() {
 
   const analyzeTransactions = async (txns) => {
     try {
-      console.log('Analyzing transactions:', txns?.length || 0);
-      console.log('Sample transaction:', txns?.[0]);
+      const transactionsToAnalyze = txns || transactions;
+      console.log('Analyzing transactions:', transactionsToAnalyze?.length || 0);
+      console.log('Sample transaction:', transactionsToAnalyze?.[0]);
+      
+      if (!transactionsToAnalyze || transactionsToAnalyze.length === 0) {
+        console.error('No transactions to analyze!');
+        return;
+      }
       
       const payload = {
-        transactions: txns || transactions,
+        transactions: transactionsToAnalyze,
       };
       
       console.log('Sending to analyze endpoint:', payload);
+      console.log('Payload has transactions:', payload.transactions.length);
       
-      const response = await axios.post(`${API_URL}/analyze`, payload);
+      const response = await axios.post(`${API_URL}/analyze`, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       console.log('Analysis response:', response.data);
       setAnalysis(response.data);
     } catch (error) {
