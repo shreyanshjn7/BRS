@@ -97,6 +97,8 @@ def parse_csv_statement(file_path):
     """Parse CSV bank statement"""
     try:
         df = pd.read_csv(file_path)
+        print(f"CSV loaded with {len(df)} rows")
+        print(f"Columns: {df.columns.tolist()}")
         
         # Try to identify columns (flexible matching)
         date_col = None
@@ -105,12 +107,12 @@ def parse_csv_statement(file_path):
         type_col = None
         
         for col in df.columns:
-            col_lower = col.lower()
+            col_lower = col.lower().strip()
             if 'date' in col_lower:
                 date_col = col
             elif 'desc' in col_lower or 'narration' in col_lower or 'particular' in col_lower:
                 desc_col = col
-            elif 'amount' in col_lower or 'debit' in col_lower or 'credit' in col_lower:
+            elif 'amount' in col_lower:
                 if amount_col is None:
                     amount_col = col
             elif 'type' in col_lower:
@@ -122,23 +124,36 @@ def parse_csv_statement(file_path):
             date_col = cols[0] if len(cols) > 0 else None
             desc_col = cols[1] if len(cols) > 1 else None
             amount_col = cols[2] if len(cols) > 2 else None
+            type_col = cols[3] if len(cols) > 3 else None
+        
+        print(f"Using columns - Date: {date_col}, Desc: {desc_col}, Amount: {amount_col}, Type: {type_col}")
         
         transactions = []
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             try:
-                amount = float(str(row[amount_col]).replace(',', '').replace('₹', '').strip()) if pd.notna(row[amount_col]) else 0
-                transactions.append({
+                amount_str = str(row[amount_col]).replace(',', '').replace('₹', '').strip()
+                amount = float(amount_str) if amount_str and amount_str != 'nan' else 0
+                
+                if amount == 0:
+                    continue
+                    
+                transaction = {
                     'date': str(row[date_col]),
                     'description': str(row[desc_col]),
                     'amount': abs(amount),
-                    'type': str(row[type_col]) if type_col and pd.notna(row[type_col]) else ('Credit' if amount > 0 else 'Debit'),
+                    'type': str(row[type_col]).strip() if type_col and pd.notna(row[type_col]) else ('Credit' if amount > 0 else 'Debit'),
                     'category': 'Uncategorized'
-                })
-            except:
+                }
+                transactions.append(transaction)
+                print(f"Row {idx}: {transaction['description'][:30]}... - {transaction['amount']} - {transaction['type']}")
+            except Exception as e:
+                print(f"Error parsing row {idx}: {e}")
                 continue
         
+        print(f"Successfully parsed {len(transactions)} transactions")
         return transactions
     except Exception as e:
+        print(f"CSV parsing error: {str(e)}")
         raise Exception(f"Error parsing CSV: {str(e)}")
 
 def categorize_transaction(description):
@@ -166,44 +181,63 @@ def health():
 def upload_file():
     """Upload and process bank statement"""
     try:
+        print("=== Upload request received ===")
+        
         if 'file' not in request.files:
+            print("Error: No file in request")
             return jsonify({'error': 'No file provided'}), 400
         
         file = request.files['file']
+        print(f"File received: {file.filename}")
         
         if file.filename == '':
+            print("Error: Empty filename")
             return jsonify({'error': 'No file selected'}), 400
         
         if not allowed_file(file.filename):
+            print(f"Error: Invalid file type - {file.filename}")
             return jsonify({'error': 'Invalid file type. Allowed: PDF, CSV, XLSX, XLS'}), 400
         
         filename = secure_filename(file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
+        print(f"File saved to: {file_path}")
         
         # Process file based on extension
         transactions = []
         file_ext = filename.rsplit('.', 1)[1].lower()
+        print(f"Processing file type: {file_ext}")
         
         if file_ext == 'pdf':
+            print("Processing as PDF...")
             with open(file_path, 'rb') as f:
                 text = extract_text_from_pdf(f)
                 transactions = parse_bank_statement_text(text)
         elif file_ext == 'csv':
+            print("Processing as CSV...")
             transactions = parse_csv_statement(file_path)
         elif file_ext in ['xlsx', 'xls']:
+            print("Processing as Excel...")
             df = pd.read_excel(file_path)
-            df.to_csv(file_path.replace(file_ext, 'csv'), index=False)
-            transactions = parse_csv_statement(file_path.replace(file_ext, 'csv'))
+            csv_path = file_path.replace(file_ext, 'csv')
+            df.to_csv(csv_path, index=False)
+            transactions = parse_csv_statement(csv_path)
+        
+        print(f"Total transactions before categorization: {len(transactions)}")
         
         # Categorize transactions
         transactions = categorize_transactions(transactions)
+        print(f"Total transactions after categorization: {len(transactions)}")
         
         # Clean up uploaded file
-        os.remove(file_path)
-        if os.path.exists(file_path.replace(file_ext, 'csv')):
-            os.remove(file_path.replace(file_ext, 'csv'))
+        try:
+            os.remove(file_path)
+            if os.path.exists(file_path.replace(file_ext, 'csv')):
+                os.remove(file_path.replace(file_ext, 'csv'))
+        except Exception as e:
+            print(f"Cleanup error: {e}")
         
+        print(f"=== Returning {len(transactions)} transactions ===")
         return jsonify({
             'success': True,
             'transactions': transactions,
@@ -211,6 +245,9 @@ def upload_file():
         })
     
     except Exception as e:
+        print(f"=== Upload error: {str(e)} ===")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/categories', methods=['GET'])
